@@ -18,6 +18,10 @@ import (
 	"github.com/zmb3/spotify"
 )
 
+type LambdaResponse struct {
+	Message string `json:"message"`
+}
+
 type songData struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -43,6 +47,36 @@ var (
 	state = "abc123"
 	sess  = session.New()
 )
+
+func main() {
+
+	local := len(os.Args) > 1 && os.Args[1] == "true"
+
+	println(local)
+	var err error
+
+	if local {
+		sess, err = session.NewSession(&aws.Config{
+			Region:      aws.String("us-east-1"),
+			Credentials: credentials.NewSharedCredentials("", "personal"),
+		})
+		if err != nil {
+			panic(err)
+		}
+		userAuth()
+		refreshReducer()
+	} else {
+
+		// sess, err = session.NewSession(&aws.Config{
+		// 	Region:      aws.String("us-east-1"),
+		// 	Credentials: credentials.NewSharedCredentials("", "personal"),
+		// })
+
+		go retrieveToken()
+		refreshReducer()
+	}
+
+}
 
 func completeAuth(w http.ResponseWriter, r *http.Request) {
 	tok, err := auth.Token(state, r)
@@ -92,9 +126,9 @@ func saveToken(token *oauth2.Token) {
 
 }
 
-func retrieveToken() *oauth2.Token {
+func retrieveToken() {
 	println("retrieve token")
-	dynamoSvc := dynamodb.New(session.New())
+	dynamoSvc := dynamodb.New(sess)
 	tokenGetItem, err := dynamoSvc.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(keyDataTable),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -120,7 +154,8 @@ func retrieveToken() *oauth2.Token {
 
 	fmt.Println("token ok", &token)
 
-	return token
+	client := auth.NewClient(token)
+	ch <- &client
 }
 
 func userAuth() {
@@ -146,35 +181,6 @@ func userAuth() {
 	fmt.Println("You are logged in as:", user.ID)
 }
 
-func main() {
-
-	local := len(os.Args) > 1 && os.Args[1] == "true"
-
-	println(local)
-
-	if local {
-		var err error
-		sess, err = session.NewSession(&aws.Config{
-			Region:      aws.String("us-east-1"),
-			Credentials: credentials.NewSharedCredentials("", "personal"),
-		})
-		if err != nil {
-			panic(err)
-		}
-		userAuth()
-		refreshReducer()
-	} else {
-		tokenToUse := retrieveToken()
-		fmt.Println(&tokenToUse)
-		client := auth.NewClient(tokenToUse)
-		fmt.Println(client)
-		ch <- &client
-		println("receive client")
-		refreshReducer()
-	}
-
-}
-
 func refreshReducer() {
 
 	println("refreshing")
@@ -197,6 +203,10 @@ func refreshReducer() {
 
 	if err != nil {
 		panic(err)
+	}
+
+	if reducerPlaylist.Tracks.Total == 0 {
+		return
 	}
 
 	currentTime := time.Now()
