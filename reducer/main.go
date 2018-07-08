@@ -24,7 +24,7 @@ import (
 	"github.com/zmb3/spotify"
 )
 
-type LambdaResponse struct {
+type lambdaResponse struct {
 	Message string `json:"message"`
 }
 
@@ -65,7 +65,7 @@ func main() {
 	}
 }
 
-func handler(ctx context.Context) (LambdaResponse, error) {
+func handler(ctx context.Context) (lambdaResponse, error) {
 
 	println(local)
 	var err error
@@ -94,7 +94,7 @@ func handler(ctx context.Context) (LambdaResponse, error) {
 		refreshReducer()
 	}
 
-	return LambdaResponse{
+	return lambdaResponse{
 		Message: "success",
 	}, nil
 
