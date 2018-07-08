@@ -51,6 +51,7 @@ var (
 func main() {
 
 	local := len(os.Args) > 1 && os.Args[1] == "true"
+	testing := len(os.Args) > 2 && os.Args[2] == "true"
 
 	println(local)
 	var err error
@@ -67,10 +68,13 @@ func main() {
 		refreshReducer()
 	} else {
 
-		// sess, err = session.NewSession(&aws.Config{
-		// 	Region:      aws.String("us-east-1"),
-		// 	Credentials: credentials.NewSharedCredentials("", "personal"),
-		// })
+		if testing {
+			sess, err = session.NewSession(&aws.Config{
+				Region:      aws.String("us-east-1"),
+				Credentials: credentials.NewSharedCredentials("", "personal"),
+			})
+
+		}
 
 		go retrieveToken()
 		refreshReducer()
