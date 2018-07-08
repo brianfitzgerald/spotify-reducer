@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -49,7 +51,10 @@ var (
 )
 
 func main() {
+	lambda.Start(handler)
+}
 
+func handler(ctx context.Context) (LambdaResponse, error) {
 	local := len(os.Args) > 1 && os.Args[1] == "true"
 	testing := len(os.Args) > 2 && os.Args[2] == "true"
 
@@ -80,6 +85,10 @@ func main() {
 		refreshReducer()
 	}
 
+	return LambdaResponse{
+		Message: "success",
+	}, nil
+
 }
 
 func completeAuth(w http.ResponseWriter, r *http.Request) {
@@ -92,12 +101,6 @@ func completeAuth(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		log.Fatalf("State mismatch: %s != %s\n", st, state)
 	}
-	// use the token to get an authenticated client
-	fmt.Println("tok", tok)
-	fmt.Println("tok.AccessToken", tok.AccessToken)
-	fmt.Println("tok.Expiry", tok.Expiry)
-	fmt.Println("tok.RefreshToken", tok.RefreshToken)
-	fmt.Println("tok.Type", tok.Type())
 	client := auth.NewClient(tok)
 	fmt.Fprintf(w, "Login Completed!")
 	ch <- &client
@@ -131,7 +134,6 @@ func saveToken(token *oauth2.Token) {
 }
 
 func retrieveToken() {
-	println("retrieve token")
 	dynamoSvc := dynamodb.New(sess)
 	tokenGetItem, err := dynamoSvc.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(keyDataTable),
@@ -157,6 +159,8 @@ func retrieveToken() {
 	}
 
 	fmt.Println("token ok", &token)
+
+	println("token expires in ", token.Expiry.Format("Mon Jan 2 15:04:05 MST 2006"))
 
 	client := auth.NewClient(token)
 	ch <- &client
@@ -191,17 +195,13 @@ func refreshReducer() {
 
 	client := <-ch
 
-	fmt.Println(client)
-	println("get profile")
-
 	user, err := client.GetUsersPublicProfile(spotify.ID(userID))
 
 	if err != nil {
 		panic(err)
 	}
 
-	println(user.ID)
-	println(user.DisplayName)
+	println("refreshing for ", user.ID)
 
 	reducerPlaylist, err := client.GetPlaylist(user.ID, reducerPlaylistID)
 
@@ -216,15 +216,11 @@ func refreshReducer() {
 	currentTime := time.Now()
 	newReducerName := fmt.Sprintf("Reducer %s", currentTime.Format("2006.01.02"))
 
-	println(newReducerName)
-
 	newReducerPlaylist, err := client.CreatePlaylistForUser(userID, newReducerName, false)
 
 	if err != nil {
 		panic(err)
 	}
-
-	println(newReducerPlaylist.Name)
 
 	dynamoSvc := dynamodb.New(sess)
 
