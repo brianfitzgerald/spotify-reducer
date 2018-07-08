@@ -1,0 +1,55 @@
+service: spotify-reducer
+
+provider:
+  name: aws
+  runtime: go1.x
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "arn:aws:dynamodb:us-east-1:288184449763:table/reducer-key-table"
+        - "arn:aws:dynamodb:us-east-1:288184449763:table/reducer-song-statistics"
+
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  reducer:
+    handler: bin/reducer
+    events:
+      - schedule:
+          rate: rate(1 day)
+          enabled: true
+resources:
+  Resources:
+    keyDataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+          TableName: reducer-key-table
+          AttributeDefinitions:
+              - AttributeName: id
+                AttributeType: S
+          KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    songStatistics:
+      Type: AWS::DynamoDB::Table
+      Properties:
+          TableName: reducer-song-statistics
+          AttributeDefinitions:
+              - AttributeName: id
+                AttributeType: S
+          KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
