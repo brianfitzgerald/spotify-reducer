@@ -49,19 +49,23 @@ const (
 )
 
 var (
-	ch    = make(chan *spotify.Client)
-	auth  = spotify.NewAuthenticator(redirectURI, spotify.ScopePlaylistModifyPrivate)
-	state = "abc123"
-	sess  = session.New()
+	ch      = make(chan *spotify.Client)
+	auth    = spotify.NewAuthenticator(redirectURI, spotify.ScopePlaylistModifyPrivate)
+	state   = "abc123"
+	sess    = session.New()
+	local   = len(os.Args) > 1 && os.Args[1] == "true"
+	testing = len(os.Args) > 2 && os.Args[2] == "true"
 )
 
 func main() {
-	lambda.Start(handler)
+	if local || testing {
+		handler(nil)
+	} else {
+		lambda.Start(handler)
+	}
 }
 
 func handler(ctx context.Context) (LambdaResponse, error) {
-	local := len(os.Args) > 1 && os.Args[1] == "true"
-	testing := len(os.Args) > 2 && os.Args[2] == "true"
 
 	println(local)
 	var err error
@@ -139,6 +143,7 @@ func saveToken(token *oauth2.Token) {
 }
 
 func refreshToken(refreshKey string) *oauth2.Token {
+	println("refresh token")
 	form := url.Values{
 		"grant_type":   {"authorization_code"},
 		"code":         {refreshKey},
@@ -189,6 +194,8 @@ func retrieveToken() {
 	if err != nil {
 		panic(err)
 	}
+
+	println(token.Expiry.Before(time.Now()))
 
 	if token.Expiry.Before(time.Now()) {
 		token = refreshToken(token.RefreshToken)
