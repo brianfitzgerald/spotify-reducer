@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -41,6 +45,7 @@ const (
 	clientSecret        = "428bdf9b128044988c58ba00e7548b9b"
 	songStatisticsTable = "reducer-song-statistics"
 	keyDataTable        = "reducer-key-table"
+	refreshURI          = "https://accounts.spotify.com/api/token"
 )
 
 var (
@@ -133,6 +138,33 @@ func saveToken(token *oauth2.Token) {
 
 }
 
+func refreshToken(refreshKey string) *oauth2.Token {
+	form := url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {refreshKey},
+		"redirect_uri": {redirectURI},
+	}
+	req, err := http.NewRequest("POST", refreshURI, strings.NewReader(form.Encode()))
+	req.Header.Add("Authorization", fmt.Sprintf("Basic %s:%s", clientID, clientSecret))
+	if err != nil {
+		panic(err)
+	}
+	client := http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer res.Body.Close()
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		panic(err)
+	}
+	println(res.StatusCode)
+	token := &oauth2.Token{}
+	json.Unmarshal(body, token)
+	return token
+}
+
 func retrieveToken() {
 	dynamoSvc := dynamodb.New(sess)
 	tokenGetItem, err := dynamoSvc.GetItem(&dynamodb.GetItemInput{
@@ -158,12 +190,21 @@ func retrieveToken() {
 		panic(err)
 	}
 
-	fmt.Println("token ok", &token)
+	if token.Expiry.Before(time.Now()) {
+		token = refreshToken(token.RefreshToken)
+		client := auth.NewClient(token)
+		ch <- &client
+	} else {
 
-	println("token expires in ", token.Expiry.Format("Mon Jan 2 15:04:05 MST 2006"))
+		fmt.Println("token ok", &token)
 
-	client := auth.NewClient(token)
-	ch <- &client
+		println("token expires in ", token.Expiry.Format("Mon Jan 2 15:04:05 MST 2006"))
+
+		client := auth.NewClient(token)
+		ch <- &client
+
+	}
+
 }
 
 func userAuth() {
