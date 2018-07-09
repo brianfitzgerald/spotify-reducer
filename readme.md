@@ -1,13 +1,11 @@
-* run once a day
-* create a new playlist with all the tracks in reducer
-* clear the current playlist
+# Spotify Reducer
 
-* get stats once a day
+A system for tracking your music tastes over time.
 
-user facing
-* refresh tokens
-* api endpoint to redirect and setup
-* create the playlist on signup
-* lambda that loads
+Here's how it works:
 
-channels are unbuffered, meaning that they will only accept sends (chan <-) if there is a corresponding receive (<- chan) ready to receive the sent value
+* clone inside `GOPATH`
+* `make` then `serverless deploy`
+* Create a playlist and enter the playlist ID in the `reducerPlaylistID` value in `main`.
+* Add songs to the playlist.
+* Each day at midnight, the lambda will copy all the songs inside there to a Dynamo table and reset the playlist for the next day's music listening. It'll also create a new playlist with all the songs for that day, if you choose.

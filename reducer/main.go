@@ -47,6 +47,7 @@ const (
 	songStatisticsTable = "reducer-song-statistics"
 	keyDataTable        = "reducer-key-table"
 	refreshURI          = "https://accounts.spotify.com/api/token"
+	createPlaylist      = true
 )
 
 var (
@@ -272,42 +273,47 @@ func refreshReducer() {
 	currentTime := time.Now()
 	newReducerName := fmt.Sprintf("Reducer %s", currentTime.Format("2006.01.02"))
 
-	newReducerPlaylist, err := client.CreatePlaylistForUser(userID, newReducerName, false)
-
-	if err != nil {
-		panic(err)
-	}
-
 	dynamoSvc := dynamodb.New(sess)
 
+	if createPlaylist {
+		newReducerPlaylist, err := client.CreatePlaylistForUser(userID, newReducerName, false)
+		if err != nil {
+			panic(err)
+		}
+		for _, track := range reducerPlaylist.Tracks.Tracks {
+			client.AddTracksToPlaylist(userID, newReducerPlaylist.ID, track.Track.ID)
+			songDataToSave := &songData{
+				ID:        track.Track.ID.String(),
+				Title:     track.Track.Name,
+				Artist:    track.Track.Artists[0].Name,
+				Timestamp: int(currentTime.Unix()),
+				Date:      currentTime.Format("2006.01.02"),
+				Reducer:   newReducerName,
+			}
+			item, err := dynamodbattribute.MarshalMap(songDataToSave)
+
+			if err != nil {
+				panic(err)
+			}
+
+			input := &dynamodb.PutItemInput{
+				Item: item,
+				ReturnConsumedCapacity: aws.String("TOTAL"),
+				TableName:              aws.String("reducer-song-statistics"),
+			}
+
+			_, err = dynamoSvc.PutItem(input)
+
+			if err != nil {
+				panic(err)
+			}
+
+		}
+
+	}
+
 	for _, track := range reducerPlaylist.Tracks.Tracks {
-		client.AddTracksToPlaylist(userID, newReducerPlaylist.ID, track.Track.ID)
 		client.RemoveTracksFromPlaylist(userID, reducerPlaylist.ID, track.Track.ID)
-		songDataToSave := &songData{
-			ID:        track.Track.ID.String(),
-			Title:     track.Track.Name,
-			Artist:    track.Track.Artists[0].Name,
-			Timestamp: int(currentTime.Unix()),
-			Date:      currentTime.Format("2006.01.02"),
-			Reducer:   newReducerName,
-		}
-		item, err := dynamodbattribute.MarshalMap(songDataToSave)
-
-		if err != nil {
-			panic(err)
-		}
-
-		input := &dynamodb.PutItemInput{
-			Item: item,
-			ReturnConsumedCapacity: aws.String("TOTAL"),
-			TableName:              aws.String("reducer-song-statistics"),
-		}
-
-		_, err = dynamoSvc.PutItem(input)
-
-		if err != nil {
-			panic(err)
-		}
 	}
 
 }
