@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -142,15 +143,18 @@ func saveToken(token *oauth2.Token) {
 
 }
 
-func refreshToken(refreshKey string) *oauth2.Token {
-	println("refresh token")
+func refreshToken(refreshToken string) *oauth2.Token {
+	println("token is obsolete, refreshing")
+	println("refresh token ", refreshToken)
 	form := url.Values{
 		"grant_type":   {"authorization_code"},
-		"code":         {refreshKey},
+		"code":         {refreshToken},
 		"redirect_uri": {redirectURI},
 	}
 	req, err := http.NewRequest("POST", refreshURI, strings.NewReader(form.Encode()))
-	req.Header.Add("Authorization", fmt.Sprintf("Basic %s:%s", clientID, clientSecret))
+	authHeader := fmt.Sprintf("Basic %s:%s", clientID, clientSecret)
+	println(authHeader)
+	req.Header.Add("Authorization", base64.StdEncoding.EncodeToString([]byte(authHeader)))
 	if err != nil {
 		panic(err)
 	}
@@ -165,6 +169,7 @@ func refreshToken(refreshKey string) *oauth2.Token {
 		panic(err)
 	}
 	println(res.StatusCode)
+	fmt.Println("token refresh response ", res)
 	token := &oauth2.Token{}
 	json.Unmarshal(body, token)
 	return token
@@ -195,10 +200,12 @@ func retrieveToken() {
 		panic(err)
 	}
 
-	println(token.Expiry.Before(time.Now()))
+	println("token.Expiry.Before ", token.Expiry.Before(time.Now()))
 
 	if token.Expiry.Before(time.Now()) {
 		token = refreshToken(token.RefreshToken)
+		println("refreshed token:")
+		fmt.Println(token)
 		client := auth.NewClient(token)
 		ch <- &client
 	} else {
