@@ -207,6 +207,7 @@ func retrieveToken() {
 		println("refreshed token:")
 		fmt.Println(token)
 		client := auth.NewClient(token)
+		saveToken(token)
 		ch <- &client
 	} else {
 
