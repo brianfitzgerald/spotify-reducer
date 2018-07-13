@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -147,15 +147,23 @@ func saveToken(token *oauth2.Token) {
 func refreshToken(refreshToken string) *oauth2.Token {
 	println("token is obsolete, refreshing")
 	println("refresh token ", refreshToken)
-	form := url.Values{
-		"grant_type":   {"authorization_code"},
-		"code":         {refreshToken},
-		"redirect_uri": {redirectURI},
-	}
-	req, err := http.NewRequest("POST", refreshURI, strings.NewReader(form.Encode()))
-	authHeader := fmt.Sprintf("Basic %s:%s", clientID, clientSecret)
-	println(authHeader)
-	req.Header.Add("Authorization", base64.StdEncoding.EncodeToString([]byte(authHeader)))
+	params := url.Values{}
+	params.Set("refresh_token", "AQDyKFYmr2giu3Wj6qzJKduGTsFjcd2yeBDUDilonWjiMbyP42Jeuqsf2jwrFkwiSwsaS5nJA6-5006Cbk0nTxXnckhfVNXc1yxecoml6VSxFIVKlUIWkx45NpB3NybMrek")
+	params.Set("grant_type", "refresh_token")
+	reqBody := bytes.NewBufferString(params.Encode())
+	req, err := http.NewRequest("POST", refreshURI, reqBody)
+
+	println("req body", reqBody.String())
+
+	headerToEncode := fmt.Sprintf("%s:%s", clientID, clientSecret)
+	encodedAuthHeader := base64.StdEncoding.EncodeToString([]byte(headerToEncode))
+	println(encodedAuthHeader)
+
+	authHeader := fmt.Sprintf("Basic %s", encodedAuthHeader)
+	println("auth header", authHeader)
+	req.Header.Add("Authorization", authHeader)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+
 	if err != nil {
 		panic(err)
 	}
