@@ -23,7 +23,7 @@ functions:
     handler: bin/reducer
     events:
       - schedule:
-          rate: rate(1 day)
+          rate: cron(0 8 * * ? *)
           enabled: true
 resources:
   Resources:
