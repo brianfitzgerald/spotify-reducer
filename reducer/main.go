@@ -51,13 +51,18 @@ const (
 )
 
 var (
-	ch      = make(chan *spotify.Client)
-	auth    = spotify.NewAuthenticator(redirectURI, spotify.ScopePlaylistModifyPrivate)
-	state   = "abc123"
-	sess    = session.New()
-	local   = len(os.Args) > 1 && os.Args[1] == "true"
-	testing = len(os.Args) > 2 && os.Args[2] == "true"
+	ch         = make(chan *spotify.Client)
+	auth       = spotify.NewAuthenticator(redirectURI, spotify.ScopePlaylistModifyPrivate)
+	state      = "abc123"
+	sess       = session.New()
+	local      = parseArg(1)
+	testing    = parseArg(2)
+	importOnly = parseArg(3)
 )
+
+func parseArg(index int) bool {
+	return len(os.Args) > index && os.Args[index] == "true"
+}
 
 func main() {
 	if local || testing {
@@ -70,7 +75,22 @@ func main() {
 func handler(ctx context.Context) (lambdaResponse, error) {
 
 	println(local)
+	println(testing)
+	println(importOnly)
 	var err error
+
+	if importOnly {
+		sess, err = session.NewSession(&aws.Config{
+			Region:      aws.String("us-east-1"),
+			Credentials: credentials.NewSharedCredentials("", "personal"),
+		})
+		println("import only")
+		userAuth()
+		importAllPlaylists(playlists)
+		return lambdaResponse{
+			Message: "success",
+		}, nil
+	}
 
 	if local {
 		sess, err = session.NewSession(&aws.Config{
@@ -115,7 +135,10 @@ func completeAuth(w http.ResponseWriter, r *http.Request) {
 	client := auth.NewClient(tok)
 	fmt.Fprintf(w, "Login Completed!")
 	ch <- &client
-	saveToken(tok)
+	ch <- &client
+	if !importOnly {
+		saveToken(tok)
+	}
 }
 
 func saveToken(token *oauth2.Token) {
