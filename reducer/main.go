@@ -39,15 +39,21 @@ type songData struct {
 }
 
 const (
-	userID              = "fudgedoodle"
-	reducerPlaylistID   = "7ICCpbSVM2lzKAiLjyKMrZ"
-	redirectURI         = "http://localhost:8080/callback"
-	clientID            = "145df35f322e4809b1ddb730f237e113"
-	clientSecret        = "428bdf9b128044988c58ba00e7548b9b"
-	songStatisticsTable = "reducer-song-statistics"
-	keyDataTable        = "reducer-key-table"
-	refreshURI          = "https://accounts.spotify.com/api/token"
-	createPlaylist      = true
+	userID                = "fudgedoodle"
+	reducerPlaylistID     = "7ICCpbSVM2lzKAiLjyKMrZ"
+	reducerPastPlaylistID = "7MHn8B6AcI0SK6qFfvcrHL"
+	redirectURI           = "http://localhost:8080/callback"
+	clientID              = "145df35f322e4809b1ddb730f237e113"
+	clientSecret          = "428bdf9b128044988c58ba00e7548b9b"
+	songStatisticsTable   = "reducer-song-statistics"
+	keyDataTable          = "reducer-key-table"
+	refreshURI            = "https://accounts.spotify.com/api/token"
+)
+
+var (
+	otherPlaylistsToMonitorIDs = []string{
+		"5FbYlXgYsRBGXKpUc5Sf1Y",
+	}
 )
 
 var (
@@ -74,9 +80,6 @@ func main() {
 
 func handler(ctx context.Context) (lambdaResponse, error) {
 
-	println(local)
-	println(testing)
-	println(importOnly)
 	var err error
 
 	if importOnly {
@@ -84,7 +87,6 @@ func handler(ctx context.Context) (lambdaResponse, error) {
 			Region:      aws.String("us-east-1"),
 			Credentials: credentials.NewSharedCredentials("", "personal"),
 		})
-		println("import only")
 		userAuth()
 		importAllPlaylists(playlists)
 		return lambdaResponse{
@@ -154,7 +156,7 @@ func saveToken(token *oauth2.Token) {
 	}
 
 	input := &dynamodb.PutItemInput{
-		Item: conv,
+		Item:                   conv,
 		ReturnConsumedCapacity: aws.String("TOTAL"),
 		TableName:              aws.String(keyDataTable),
 	}
@@ -168,22 +170,16 @@ func saveToken(token *oauth2.Token) {
 }
 
 func refreshToken(refreshToken string) *oauth2.Token {
-	println("token is obsolete, refreshing")
-	println("refresh token ", refreshToken)
 	params := url.Values{}
 	params.Set("refresh_token", "AQDyKFYmr2giu3Wj6qzJKduGTsFjcd2yeBDUDilonWjiMbyP42Jeuqsf2jwrFkwiSwsaS5nJA6-5006Cbk0nTxXnckhfVNXc1yxecoml6VSxFIVKlUIWkx45NpB3NybMrek")
 	params.Set("grant_type", "refresh_token")
 	reqBody := bytes.NewBufferString(params.Encode())
 	req, err := http.NewRequest("POST", refreshURI, reqBody)
 
-	println("req body", reqBody.String())
-
 	headerToEncode := fmt.Sprintf("%s:%s", clientID, clientSecret)
 	encodedAuthHeader := base64.StdEncoding.EncodeToString([]byte(headerToEncode))
-	println(encodedAuthHeader)
 
 	authHeader := fmt.Sprintf("Basic %s", encodedAuthHeader)
-	println("auth header", authHeader)
 	req.Header.Add("Authorization", authHeader)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 
@@ -200,7 +196,6 @@ func refreshToken(refreshToken string) *oauth2.Token {
 	if err != nil {
 		panic(err)
 	}
-	println(res.StatusCode)
 	fmt.Println("token refresh response ", res)
 	token := &oauth2.Token{}
 	json.Unmarshal(body, token)
@@ -224,28 +219,18 @@ func retrieveToken() {
 
 	token := &oauth2.Token{}
 
-	fmt.Println(token)
-
 	err = dynamodbattribute.UnmarshalMap(tokenGetItem.Item, token)
 
 	if err != nil {
 		panic(err)
 	}
 
-	println("token.Expiry.Before ", token.Expiry.Before(time.Now()))
-
 	if token.Expiry.Before(time.Now()) {
 		token = refreshToken(token.RefreshToken)
-		println("refreshed token:")
-		fmt.Println(token)
 		client := auth.NewClient(token)
 		saveToken(token)
 		ch <- &client
 	} else {
-
-		fmt.Println("token ok", &token)
-
-		println("token expires in ", token.Expiry.Format("Mon Jan 2 15:04:05 MST 2006"))
 
 		client := auth.NewClient(token)
 		ch <- &client
@@ -279,19 +264,9 @@ func userAuth() {
 
 func refreshReducer() {
 
-	println("refreshing")
-
 	client := <-ch
 
-	user, err := client.GetUsersPublicProfile(spotify.ID(userID))
-
-	if err != nil {
-		panic(err)
-	}
-
-	println("refreshing for ", user.ID)
-
-	reducerPlaylist, err := client.GetPlaylist(user.ID, reducerPlaylistID)
+	reducerPlaylist, err := client.GetPlaylist(reducerPlaylistID)
 
 	if err != nil {
 		panic(err)
@@ -306,39 +281,61 @@ func refreshReducer() {
 
 	dynamoSvc := dynamodb.New(sess)
 
-	if createPlaylist {
-		newReducerPlaylist, err := client.CreatePlaylistForUser(userID, newReducerName, false)
+	if err != nil {
+		panic(err)
+	}
+	tracksToAdd := reducerPlaylist.Tracks.Tracks
+	for _, playlistID := range otherPlaylistsToMonitorIDs {
+		tracks, err := client.GetPlaylistTracks(spotify.ID(playlistID))
+		if err != nil {
+			break
+		}
+		for _, track := range tracks.Tracks {
+			addedDate, _ := time.Parse(spotify.TimestampLayout, track.AddedAt)
+			startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
+			if addedDate.After(startOfDay) {
+				tracksToAdd = append(tracksToAdd, track)
+			}
+		}
+	}
+	for _, track := range tracksToAdd {
+		reducerPastTracks, err := client.GetPlaylistTracks(reducerPastPlaylistID)
 		if err != nil {
 			panic(err)
 		}
-		for _, track := range reducerPlaylist.Tracks.Tracks {
-			client.AddTracksToPlaylist(userID, newReducerPlaylist.ID, track.Track.ID)
-			songDataToSave := &songData{
-				ID:        track.Track.ID.String(),
-				Title:     track.Track.Name,
-				Artist:    track.Track.Artists[0].Name,
-				Timestamp: int(currentTime.Unix()),
-				Date:      currentTime.Format("2006.01.02"),
-				Reducer:   newReducerName,
+		addTrackToPast := true
+		for _, pt := range reducerPastTracks.Tracks {
+			if pt.Track.ID == track.Track.ID {
+				addTrackToPast = false
 			}
-			item, err := dynamodbattribute.MarshalMap(songDataToSave)
+		}
+		if addTrackToPast {
+			client.AddTracksToPlaylist(userID, reducerPastPlaylistID, track.Track.ID)
+		}
+		songDataToSave := &songData{
+			ID:        track.Track.ID.String(),
+			Title:     track.Track.Name,
+			Artist:    track.Track.Artists[0].Name,
+			Timestamp: int(currentTime.Unix()),
+			Date:      currentTime.Format("2006.01.02"),
+			Reducer:   newReducerName,
+		}
+		item, err := dynamodbattribute.MarshalMap(songDataToSave)
 
-			if err != nil {
-				panic(err)
-			}
+		if err != nil {
+			panic(err)
+		}
 
-			input := &dynamodb.PutItemInput{
-				Item: item,
-				ReturnConsumedCapacity: aws.String("TOTAL"),
-				TableName:              aws.String("reducer-song-statistics"),
-			}
+		input := &dynamodb.PutItemInput{
+			Item:                   item,
+			ReturnConsumedCapacity: aws.String("TOTAL"),
+			TableName:              aws.String("reducer-song-statistics"),
+		}
 
-			_, err = dynamoSvc.PutItem(input)
+		_, err = dynamoSvc.PutItem(input)
 
-			if err != nil {
-				panic(err)
-			}
-
+		if err != nil {
+			panic(err)
 		}
 
 	}

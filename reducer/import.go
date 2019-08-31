@@ -31,7 +31,7 @@ func importPlaylist(playlist *spotify.FullPlaylist) {
 		}
 
 		input := &dynamodb.PutItemInput{
-			Item: item,
+			Item:                   item,
 			ReturnConsumedCapacity: aws.String("TOTAL"),
 			TableName:              aws.String("reducer-song-statistics"),
 		}
@@ -51,7 +51,7 @@ func importAllPlaylists(playlistIDs []string) {
 	for _, fullURL := range playlistIDs {
 		url := strings.Split(fullURL, "/")[6]
 		println(url)
-		playlist, err := client.GetPlaylist(userID, spotify.ID(url))
+		playlist, err := client.GetPlaylist(spotify.ID(url))
 		if err != nil {
 			panic(err)
 		}
