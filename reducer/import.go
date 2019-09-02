@@ -47,7 +47,7 @@ func importPlaylist(playlist *spotify.FullPlaylist) {
 }
 
 func importAllPlaylists(playlistIDs []string) {
-	client := <-ch
+	client := <-clientChannel
 	for _, fullURL := range playlistIDs {
 		url := strings.Split(fullURL, "/")[6]
 		println(url)
