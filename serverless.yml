@@ -3,6 +3,7 @@ service: spotify-reducer
 provider:
   name: aws
   runtime: go1.x
+  profile: personal
   iamRoleStatements:
     - Effect: "Allow"
       Action:

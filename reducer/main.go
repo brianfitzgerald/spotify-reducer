@@ -40,7 +40,8 @@ type songData struct {
 
 const (
 	userID                 = "fudgedoodle"
-	reducerPlaylistID      = "7MHn8B6AcI0SK6qFfvcrHL"
+	reducerPastPlaylistID  = "7MHn8B6AcI0SK6qFfvcrHL"
+	bufferPlaylistID       = "1rWKf36NvH4q6imCstXvy4"
 	sixMonthsAgoPlaylistID = "1JzrBnA8LeB99urw7q54ed"
 	redirectURI            = "http://localhost:8080/callback"
 	clientID               = "145df35f322e4809b1ddb730f237e113"
@@ -52,8 +53,7 @@ const (
 
 var (
 	playlistsToMonitor = []string{
-		"5FbYlXgYsRBGXKpUc5Sf1Y",
-		reducerPlaylistID,
+		bufferPlaylistID,
 	}
 )
 
@@ -291,6 +291,7 @@ func refreshReducer() error {
 	currentTime := time.Now()
 	newReducerName := fmt.Sprintf("Reducer %s", currentTime.Format("2006.01.02"))
 
+	// get tracks to add
 	tracksToAdd := []spotify.PlaylistTrack{}
 	for _, playlistID := range playlistsToMonitor {
 		trackNum, err := client.GetPlaylist(spotify.ID(playlistID))
@@ -309,24 +310,22 @@ func refreshReducer() error {
 			}
 		}
 	}
+
 	tracksAddedCount := 0
+
+	// add tracks to dynamo / spotify
 	for _, track := range tracksToAdd {
 		addedDate, _ := time.Parse(spotify.TimestampLayout, track.AddedAt)
 		startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
-		// fmt.Printf("%v %v %s %t \n", addedDate, startOfDay, track.Track.Name, addedDate.After(startOfDay))
 		if addedDate.Before(startOfDay) {
 			continue
 		}
-		reducerPastTracks, err := client.GetPlaylistTracks(reducerPlaylistID)
+
+		reducerPastTracks, err := client.GetPlaylistTracks(reducerPastPlaylistID)
 		if err != nil {
 			return err
 		}
-		for _, pt := range reducerPastTracks.Tracks {
-			if pt.Track.ID == track.Track.ID {
-				continue
-			}
-		}
-		client.AddTracksToPlaylist(userID, reducerPlaylistID, track.Track.ID)
+
 		songDataToSave := &songData{
 			ID:        track.Track.ID.String(),
 			Title:     track.Track.Name,
@@ -350,6 +349,13 @@ func refreshReducer() error {
 		if addToDynamo {
 			_, err = dynamoSvc.PutItem(input)
 		}
+		fmt.Printf("%v", input)
+
+		for _, pt := range reducerPastTracks.Tracks {
+			if pt.Track.ID == track.Track.ID {
+				continue
+			}
+		}
 
 		tracksAddedCount++
 
@@ -359,7 +365,15 @@ func refreshReducer() error {
 
 	}
 
-	fmt.Printf("%d tracks added", tracksAddedCount)
+	var tracksAddedIDs []spotify.ID
+	for _, track := range tracksToAdd {
+		tracksAddedIDs = append(tracksAddedIDs, track.Track.ID)
+	}
+
+	client.RemoveTracksFromPlaylist(bufferPlaylistID, tracksAddedIDs...)
+	client.AddTracksToPlaylist(reducerPastPlaylistID, tracksAddedIDs...)
+
+	fmt.Printf("%d tracks added\n", tracksAddedCount)
 
 	return nil
 
