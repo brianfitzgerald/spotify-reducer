@@ -1,0 +1,1 @@
+go run reducer/import.go reducer/main.go true true false
