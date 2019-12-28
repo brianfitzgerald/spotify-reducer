@@ -1,15 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"time"
 
@@ -18,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"golang.org/x/oauth2"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -44,16 +36,16 @@ type songListenedAt struct {
 }
 
 const (
-	userID                 = "fudgedoodle"
-	reducerPastPlaylistID  = "7MHn8B6AcI0SK6qFfvcrHL"
-	bufferPlaylistID       = "1rWKf36NvH4q6imCstXvy4"
-	sixMonthsAgoPlaylistID = "1JzrBnA8LeB99urw7q54ed"
-	redirectURI            = "http://localhost:8080/callback"
-	clientID               = "145df35f322e4809b1ddb730f237e113"
-	clientSecret           = "428bdf9b128044988c58ba00e7548b9b"
-	songStatisticsTable    = "reducer-song-statistics"
-	keyDataTable           = "reducer-key-table"
-	refreshURI             = "https://accounts.spotify.com/api/token"
+	userID                = "fudgedoodle"
+	reducerPastPlaylistID = "7MHn8B6AcI0SK6qFfvcrHL"
+	bufferPlaylistID      = "1rWKf36NvH4q6imCstXvy4"
+	snapshotPlaylistID    = "1JzrBnA8LeB99urw7q54ed"
+	redirectURI           = "http://localhost:8080/callback"
+	clientID              = "145df35f322e4809b1ddb730f237e113"
+	clientSecret          = "428bdf9b128044988c58ba00e7548b9b"
+	songStatisticsTable   = "reducer-song-statistics"
+	keyDataTable          = "reducer-key-table"
+	refreshURI            = "https://accounts.spotify.com/api/token"
 )
 
 var (
@@ -68,8 +60,7 @@ var (
 	state           = "abc123"
 	sess            = session.New()
 	local           = parseArg(1)
-	testing         = parseArg(2)
-	importOnly      = parseArg(3)
+	importOnly      = parseArg(2)
 	clientGetAmount = 5
 	addToDynamo     = true
 )
@@ -79,7 +70,7 @@ func parseArg(index int) bool {
 }
 
 func main() {
-	if local || testing {
+	if local {
 		handler(nil)
 	} else {
 		lambda.Start(handler)
@@ -113,7 +104,7 @@ func handler(ctx context.Context) (lambdaResponse, error) {
 			}, err
 		}
 		userAuth()
-		err := refreshReducer()
+		err := refreshAllPlaylists()
 		if err != nil {
 			fmt.Println(err)
 			return lambdaResponse{
@@ -122,16 +113,8 @@ func handler(ctx context.Context) (lambdaResponse, error) {
 		}
 	} else {
 
-		if testing {
-			sess, err = session.NewSession(&aws.Config{
-				Region:      aws.String("us-east-1"),
-				Credentials: credentials.NewSharedCredentials("", "personal"),
-			})
-
-		}
-
 		go retrieveToken()
-		err := refreshReducer()
+		err := refreshAllPlaylists()
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -143,153 +126,36 @@ func handler(ctx context.Context) (lambdaResponse, error) {
 
 }
 
-func completeAuth(w http.ResponseWriter, r *http.Request) {
-	tok, err := auth.Token(state, r)
-	if err != nil {
-		http.Error(w, "Couldn't get token", http.StatusForbidden)
-		log.Fatal(err)
-	}
-	if st := r.FormValue("state"); st != state {
-		http.NotFound(w, r)
-		log.Fatalf("State mismatch: %s != %s\n", st, state)
-	}
-	client := auth.NewClient(tok)
-	fmt.Fprintf(w, "Login Completed!")
-	for i := 0; i < clientGetAmount; i++ {
-		clientChannel <- &client
-	}
-	if !importOnly {
-		saveToken(tok)
-	}
-}
-
-func saveToken(token *oauth2.Token) {
+func getAllStoredSongs() []songData {
 	dynamoSvc := dynamodb.New(sess)
-	conv, err := dynamodbattribute.MarshalMap(token)
-
-	if err != nil {
-		panic(err)
-	}
-
-	conv["id"] = &dynamodb.AttributeValue{
-		S: aws.String(userID),
-	}
-
-	input := &dynamodb.PutItemInput{
-		Item:                   conv,
-		ReturnConsumedCapacity: aws.String("TOTAL"),
-		TableName:              aws.String(keyDataTable),
-	}
-
-	_, err = dynamoSvc.PutItem(input)
-
-	if err != nil {
-		panic(err)
-	}
-
-}
-
-func refreshToken(refreshToken string) (*oauth2.Token, error) {
-	params := url.Values{}
-	params.Set("refresh_token", "AQDyKFYmr2giu3Wj6qzJKduGTsFjcd2yeBDUDilonWjiMbyP42Jeuqsf2jwrFkwiSwsaS5nJA6-5006Cbk0nTxXnckhfVNXc1yxecoml6VSxFIVKlUIWkx45NpB3NybMrek")
-	params.Set("grant_type", "refresh_token")
-	reqBody := bytes.NewBufferString(params.Encode())
-	req, err := http.NewRequest("POST", refreshURI, reqBody)
-
-	headerToEncode := fmt.Sprintf("%s:%s", clientID, clientSecret)
-	encodedAuthHeader := base64.StdEncoding.EncodeToString([]byte(headerToEncode))
-
-	authHeader := fmt.Sprintf("Basic %s", encodedAuthHeader)
-	req.Header.Add("Authorization", authHeader)
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-
-	if err != nil {
-		return nil, err
-	}
-	client := http.Client{}
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Println("token refresh response ", res)
-	token := &oauth2.Token{}
-	json.Unmarshal(body, token)
-	return token, nil
-}
-
-func retrieveToken() error {
-	dynamoSvc := dynamodb.New(sess)
-	tokenGetItem, err := dynamoSvc.GetItem(&dynamodb.GetItemInput{
-		TableName: aws.String(keyDataTable),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String(userID),
-			},
-		},
+	songScan, err := dynamoSvc.Scan(&dynamodb.ScanInput{
+		TableName: aws.String(songStatisticsTable),
 	})
-
-	if err != nil {
-		return err
-	}
-
-	token := &oauth2.Token{}
-
-	err = dynamodbattribute.UnmarshalMap(tokenGetItem.Item, token)
-
-	if err != nil {
-		return err
-	}
-
-	if token.Expiry.Before(time.Now()) {
-		token, err = refreshToken(token.RefreshToken)
+	allSongs := []songData{}
+	for _, dynamoSong := range songScan.Items {
+		song := songData{}
+		err = dynamodbattribute.UnmarshalMap(dynamoSong, song)
 		if err != nil {
-			fmt.Println(err)
+			println(err)
 		}
-		client := auth.NewClient(token)
-		saveToken(token)
-		clientChannel <- &client
-	} else {
-
-		client := auth.NewClient(token)
-		clientChannel <- &client
-
+		allSongs = append(allSongs, song)
 	}
-
-	return nil
-
+	return allSongs
 }
 
-func userAuth() {
-	http.HandleFunc("/callback", completeAuth)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Got request for:", r.URL.String())
-	})
-	go http.ListenAndServe(":8080", nil)
-
-	auth.SetAuthInfo(clientID, clientSecret)
-
-	url := auth.AuthURL(state)
-	fmt.Println("Please log in to Spotify by visiting the following page in your browser:", url)
-
-	// wait for auth to complete
+func refreshAllPlaylists() error {
 	client := <-clientChannel
-
-	// use the client to make calls that require authorization
-	user, err := client.CurrentUser()
+	err := refreshReducer(client)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	fmt.Println("You are logged in as:", user.ID)
+	allSongs := getAllStoredSongs()
+	refreshSnapshot(allSongs, client, -6, snapshotPlaylistID)
+	refreshSnapshot(allSongs, client, -12, snapshotPlaylistID)
+	return nil
 }
 
-func refreshReducer() error {
-
-	client := <-clientChannel
+func refreshReducer(client *spotify.Client) error {
 
 	dynamoSvc := dynamodb.New(sess)
 
@@ -357,9 +223,8 @@ func refreshReducer() error {
 		}
 
 		input := &dynamodb.PutItemInput{
-			Item:                   item,
-			ReturnConsumedCapacity: aws.String("TOTAL"),
-			TableName:              aws.String("reducer-song-statistics"),
+			Item:      item,
+			TableName: aws.String("reducer-song-statistics"),
 		}
 
 		if addToDynamo {
@@ -395,33 +260,27 @@ func refreshReducer() error {
 
 }
 
-func refreshSixMonthsAgo() {
-	client := <-clientChannel
-	dynamoSvc := dynamodb.New(sess)
-	allSongs, err := dynamoSvc.Scan(&dynamodb.ScanInput{
-		TableName: aws.String(songStatisticsTable),
-	})
-	sixMonthsAgo := time.Now().AddDate(0, -6, 0)
-	songsToAdd := []spotify.ID{}
-	for _, dynamoSong := range allSongs.Items {
-		song := songData{}
-		err = dynamodbattribute.UnmarshalMap(dynamoSong, song)
-		if err != nil {
-			println(err)
-		}
-		if song.Date == sixMonthsAgo.Format("2006.01.02") {
-			songsToAdd = append(songsToAdd, spotify.ID(song.ID))
-		}
-	}
-	existingSongs, _ := client.GetPlaylistTracks(sixMonthsAgoPlaylistID)
+func refreshSnapshot(allStoredSongs []songData, client *spotify.Client, monthOffset int, playlistID spotify.ID) {
+
+	existingSongs, _ := client.GetPlaylistTracks(playlistID)
+
 	songIDsToRemove := []spotify.ID{}
+
 	for _, song := range existingSongs.Tracks {
 		songIDsToRemove = append(songIDsToRemove, song.Track.ID)
 	}
-	client.RemoveTracksFromPlaylist(sixMonthsAgoPlaylistID, songIDsToRemove...)
-	fmt.Printf("songs from 6 months ago: %+v", songsToAdd)
-	client.AddTracksToPlaylist(sixMonthsAgoPlaylistID, songsToAdd...)
-	if err != nil {
-		return
+
+	timeOffset := time.Now().AddDate(0, monthOffset, 0)
+
+	songsToAdd := []spotify.ID{}
+
+	for _, song := range allStoredSongs {
+		if song.Date == timeOffset.Format("2006.01.02") {
+			songsToAdd = append(songsToAdd, spotify.ID(song.ID))
+		}
 	}
+
+	client.RemoveTracksFromPlaylist(snapshotPlaylistID, songIDsToRemove...)
+	client.AddTracksToPlaylist(snapshotPlaylistID, songsToAdd...)
+
 }
