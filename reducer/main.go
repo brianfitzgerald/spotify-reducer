@@ -38,6 +38,11 @@ type songData struct {
 	Reducer   string `json:"reducer"`
 }
 
+type songListenedAt struct {
+	Track   spotify.SimpleTrack
+	AddedAt string
+}
+
 const (
 	userID                 = "fudgedoodle"
 	reducerPastPlaylistID  = "7MHn8B6AcI0SK6qFfvcrHL"
@@ -292,7 +297,8 @@ func refreshReducer() error {
 	newReducerName := fmt.Sprintf("Reducer %s", currentTime.Format("2006.01.02"))
 
 	// get tracks to add
-	tracksToAdd := []spotify.PlaylistTrack{}
+	tracksToAdd := []songListenedAt{}
+
 	for _, playlistID := range playlistsToMonitor {
 		trackNum, err := client.GetPlaylist(spotify.ID(playlistID))
 		if err != nil {
@@ -302,13 +308,23 @@ func refreshReducer() error {
 		for i := 0; i < numTracks; i += 100 {
 			tracksPage, err := client.GetPlaylistTracksOpt(spotify.ID(playlistID), &spotify.Options{Offset: &i}, "")
 			for _, track := range tracksPage.Tracks {
-				tracksToAdd = append(tracksToAdd, track)
+				tracksToAdd = append(tracksToAdd, songListenedAt{track.Track.SimpleTrack, track.AddedAt})
 			}
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
 		}
+	}
+
+	recentlyPlayed, err := client.PlayerRecentlyPlayed()
+
+	if err != nil {
+		println(err)
+	}
+
+	for _, track := range recentlyPlayed {
+		tracksToAdd = append(tracksToAdd, songListenedAt{track.Track, track.PlayedAt.Format(spotify.TimestampLayout)})
 	}
 
 	tracksAddedCount := 0
