@@ -66,7 +66,7 @@ var (
 	testing         = parseArg(2)
 	importOnly      = parseArg(3)
 	clientGetAmount = 5
-	addToDynamo     = false
+	addToDynamo     = true
 )
 
 func parseArg(index int) bool {
@@ -370,8 +370,8 @@ func refreshReducer() error {
 		tracksAddedIDs = append(tracksAddedIDs, track.Track.ID)
 	}
 
-	client.RemoveTracksFromPlaylist(bufferPlaylistID, tracksAddedIDs...)
 	client.AddTracksToPlaylist(reducerPastPlaylistID, tracksAddedIDs...)
+	client.RemoveTracksFromPlaylist(bufferPlaylistID, tracksAddedIDs...)
 
 	fmt.Printf("%d tracks added\n", tracksAddedCount)
 
