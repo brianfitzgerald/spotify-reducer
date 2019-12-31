@@ -1,1 +1,1 @@
-go run reducer/import.go reducer/main.go true true false
+go run reducer/*.go true

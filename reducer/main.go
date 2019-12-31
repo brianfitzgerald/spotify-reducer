@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -62,7 +63,7 @@ var (
 	local           = parseArg(1)
 	importOnly      = parseArg(2)
 	clientGetAmount = 5
-	addToDynamo     = true
+	addToDynamo     = false
 )
 
 func parseArg(index int) bool {
@@ -106,7 +107,7 @@ func handler(ctx context.Context) (lambdaResponse, error) {
 		userAuth()
 		err := refreshAllPlaylists()
 		if err != nil {
-			fmt.Println(err)
+			println(err)
 			return lambdaResponse{
 				Message: "fail",
 			}, err
@@ -116,7 +117,7 @@ func handler(ctx context.Context) (lambdaResponse, error) {
 		go retrieveToken()
 		err := refreshAllPlaylists()
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 	}
 
@@ -133,12 +134,12 @@ func getAllStoredSongs() []songData {
 	})
 	allSongs := []songData{}
 	for _, dynamoSong := range songScan.Items {
-		song := songData{}
+		song := &songData{}
 		err = dynamodbattribute.UnmarshalMap(dynamoSong, song)
 		if err != nil {
-			println(err)
+			log.Fatal(err)
 		}
-		allSongs = append(allSongs, song)
+		allSongs = append(allSongs, *song)
 	}
 	return allSongs
 }
@@ -177,7 +178,7 @@ func refreshReducer(client *spotify.Client) error {
 				tracksToAdd = append(tracksToAdd, songListenedAt{track.Track.SimpleTrack, track.AddedAt})
 			}
 			if err != nil {
-				fmt.Println(err)
+				println(err)
 				continue
 			}
 		}
@@ -185,12 +186,10 @@ func refreshReducer(client *spotify.Client) error {
 
 	recentlyPlayed, err := client.PlayerRecentlyPlayed()
 
-	if err != nil {
-		println(err)
-	}
-
-	for _, track := range recentlyPlayed {
-		tracksToAdd = append(tracksToAdd, songListenedAt{track.Track, track.PlayedAt.Format(spotify.TimestampLayout)})
+	if err == nil {
+		for _, track := range recentlyPlayed {
+			tracksToAdd = append(tracksToAdd, songListenedAt{track.Track, track.PlayedAt.Format(spotify.TimestampLayout)})
+		}
 	}
 
 	tracksAddedCount := 0
@@ -228,12 +227,13 @@ func refreshReducer(client *spotify.Client) error {
 		}
 
 		if addToDynamo {
+			fmt.Printf("Add song: %s", track.Track.Name)
 			_, err = dynamoSvc.PutItem(input)
 		}
-		fmt.Printf("%v", input)
 
-		for _, pt := range reducerPastTracks.Tracks {
-			if pt.Track.ID == track.Track.ID {
+		for _, pastTrack := range reducerPastTracks.Tracks {
+			if pastTrack.Track.ID == track.Track.ID {
+				fmt.Printf("detected duplicate: %s", track.Track.Name)
 				continue
 			}
 		}
