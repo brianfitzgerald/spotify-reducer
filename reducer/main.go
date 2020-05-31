@@ -40,7 +40,8 @@ const (
 	userID                = "fudgedoodle"
 	reducerPastPlaylistID = "7MHn8B6AcI0SK6qFfvcrHL"
 	bufferPlaylistID      = "1rWKf36NvH4q6imCstXvy4"
-	snapshotPlaylistID    = "1JzrBnA8LeB99urw7q54ed"
+	historyPlaylistID     = "3qRoWUcFzg4MPigu2jfesV"
+	snapshotPlaylistID    = "1rWKf36NvH4q6imCstXvy4"
 	redirectURI           = "http://localhost:8080/callback"
 	clientID              = "145df35f322e4809b1ddb730f237e113"
 	clientSecret          = "428bdf9b128044988c58ba00e7548b9b"
@@ -146,22 +147,88 @@ func getAllStoredSongs() []songData {
 
 func refreshAllPlaylists() error {
 	client := <-clientChannel
-	err := refreshReducer(client)
+	// take songs from buffer and put them in reducer
+	err := refreshReducer(*client)
 	if err != nil {
 		return err
 	}
+	err = addRecentlyPlayed(client)
+	if err != nil {
+		return err
+	}
+
+	// refresh the snapshot playlist with both 6 and 12 months ago
 	allSongs := getAllStoredSongs()
+	removeAllFromPlaylist(allSongs, client, snapshotPlaylistID)
 	refreshSnapshot(allSongs, client, -6, snapshotPlaylistID)
 	refreshSnapshot(allSongs, client, -12, snapshotPlaylistID)
 	return nil
 }
 
-func refreshReducer(client *spotify.Client) error {
+func addRecentlyPlayed(client *spotify.Client) error {
+	recentlyPlayed, err := client.PlayerRecentlyPlayed()
 
+	// get tracks to add
+	tracksToAdd := []songListenedAt{}
 	dynamoSvc := dynamodb.New(sess)
+
+	if err == nil {
+		for _, track := range recentlyPlayed {
+			tracksToAdd = append(tracksToAdd, songListenedAt{track.Track, track.PlayedAt.Format(spotify.TimestampLayout)})
+		}
+	}
+
+	for _, track := range tracksToAdd {
+		addTrackToDynamo(track, *client, dynamoSvc)
+	}
+
+	return nil
+}
+
+func addTrackToDynamo(track songListenedAt, client spotify.Client, dynamoSvc *dynamodb.DynamoDB) error {
 
 	currentTime := time.Now()
 	newReducerName := fmt.Sprintf("Reducer %s", currentTime.Format("2006.01.02"))
+
+	addedDate, _ := time.Parse(spotify.TimestampLayout, track.AddedAt)
+	startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
+	if addedDate.Before(startOfDay) {
+		return nil
+	}
+
+	songDataToSave := &songData{
+		ID:        track.Track.ID.String(),
+		Title:     track.Track.Name,
+		Artist:    track.Track.Artists[0].Name,
+		Timestamp: int(currentTime.Unix()),
+		Date:      currentTime.Format("2006.01.02"),
+		Reducer:   newReducerName,
+	}
+	item, err := dynamodbattribute.MarshalMap(songDataToSave)
+
+	if err != nil {
+		return err
+	}
+
+	input := &dynamodb.PutItemInput{
+		Item:      item,
+		TableName: aws.String("reducer-song-statistics"),
+	}
+
+	if addToDynamo {
+		fmt.Printf("Add song: %s", track.Track.Name)
+		_, err = dynamoSvc.PutItem(input)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func refreshReducer(client spotify.Client) error {
 
 	// get tracks to add
 	tracksToAdd := []songListenedAt{}
@@ -184,66 +251,25 @@ func refreshReducer(client *spotify.Client) error {
 		}
 	}
 
-	recentlyPlayed, err := client.PlayerRecentlyPlayed()
-
-	if err == nil {
-		for _, track := range recentlyPlayed {
-			tracksToAdd = append(tracksToAdd, songListenedAt{track.Track, track.PlayedAt.Format(spotify.TimestampLayout)})
-		}
-	}
-
 	tracksAddedCount := 0
 
+	reducerPastTracks, err := client.GetPlaylistTracks(reducerPastPlaylistID)
+	if err != nil {
+		return err
+	}
+
+	dynamoSvc := dynamodb.New(sess)
 	// add tracks to dynamo / spotify
 	for _, track := range tracksToAdd {
-		addedDate, _ := time.Parse(spotify.TimestampLayout, track.AddedAt)
-		startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
-		if addedDate.Before(startOfDay) {
-			continue
-		}
-
-		reducerPastTracks, err := client.GetPlaylistTracks(reducerPastPlaylistID)
-		if err != nil {
-			return err
-		}
-
-		songDataToSave := &songData{
-			ID:        track.Track.ID.String(),
-			Title:     track.Track.Name,
-			Artist:    track.Track.Artists[0].Name,
-			Timestamp: int(currentTime.Unix()),
-			Date:      currentTime.Format("2006.01.02"),
-			Reducer:   newReducerName,
-		}
-		item, err := dynamodbattribute.MarshalMap(songDataToSave)
-
-		if err != nil {
-			return err
-		}
-
-		input := &dynamodb.PutItemInput{
-			Item:      item,
-			TableName: aws.String("reducer-song-statistics"),
-		}
-
-		if addToDynamo {
-			fmt.Printf("Add song: %s", track.Track.Name)
-			_, err = dynamoSvc.PutItem(input)
-		}
-
 		for _, pastTrack := range reducerPastTracks.Tracks {
 			if pastTrack.Track.ID == track.Track.ID {
-				fmt.Printf("detected duplicate: %s", track.Track.Name)
+				fmt.Printf("detected duplicate: %s\n", track.Track.Name)
 				continue
 			}
 		}
-
 		tracksAddedCount++
 
-		if err != nil {
-			return err
-		}
-
+		addTrackToDynamo(track, client, dynamoSvc)
 	}
 
 	var tracksAddedIDs []spotify.ID
@@ -251,36 +277,18 @@ func refreshReducer(client *spotify.Client) error {
 		tracksAddedIDs = append(tracksAddedIDs, track.Track.ID)
 	}
 
-	client.AddTracksToPlaylist(reducerPastPlaylistID, tracksAddedIDs...)
-	client.RemoveTracksFromPlaylist(bufferPlaylistID, tracksAddedIDs...)
+	for i := 0; i < len(tracksAddedIDs); i += 100 {
+		trackEnd := i + 100
+		if trackEnd > len(tracksAddedIDs) {
+			trackEnd = len(tracksAddedIDs)
+		}
+		trackBatch := tracksAddedIDs[i:trackEnd]
+		_, err = client.AddTracksToPlaylist(reducerPastPlaylistID, trackBatch...)
+		_, err = client.RemoveTracksFromPlaylist(bufferPlaylistID, trackBatch...)
+	}
 
 	fmt.Printf("%d tracks added\n", tracksAddedCount)
 
 	return nil
-
-}
-
-func refreshSnapshot(allStoredSongs []songData, client *spotify.Client, monthOffset int, playlistID spotify.ID) {
-
-	existingSongs, _ := client.GetPlaylistTracks(playlistID)
-
-	songIDsToRemove := []spotify.ID{}
-
-	for _, song := range existingSongs.Tracks {
-		songIDsToRemove = append(songIDsToRemove, song.Track.ID)
-	}
-
-	timeOffset := time.Now().AddDate(0, monthOffset, 0)
-
-	songsToAdd := []spotify.ID{}
-
-	for _, song := range allStoredSongs {
-		if song.Date == timeOffset.Format("2006.01.02") {
-			songsToAdd = append(songsToAdd, spotify.ID(song.ID))
-		}
-	}
-
-	client.RemoveTracksFromPlaylist(snapshotPlaylistID, songIDsToRemove...)
-	client.AddTracksToPlaylist(snapshotPlaylistID, songsToAdd...)
 
 }

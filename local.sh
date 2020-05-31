@@ -1,1 +1,1 @@
-go run reducer/*.go true
+go run reducer/*.go true false
