@@ -72,6 +72,7 @@ func parseArg(index int) bool {
 }
 
 func main() {
+	println("lambda started")
 	if local {
 		handler(nil)
 	} else {

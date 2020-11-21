@@ -1,1 +1,1 @@
-go run reducer/*.go true false
+go run spotify_reducer/*.go true false

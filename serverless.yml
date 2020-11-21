@@ -12,16 +12,15 @@ provider:
         - "arn:aws:dynamodb:us-east-1:288184449763:table/reducer-key-table"
         - "arn:aws:dynamodb:us-east-1:288184449763:table/reducer-song-statistics"
 
-
 package:
- exclude:
-   - ./**
- include:
-   - ./bin/**
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
 
 functions:
   reducer:
-    handler: bin/reducer
+    handler: bin/spotify_reducer
     events:
       - schedule:
           rate: cron(0 8 * * ? *)
@@ -31,26 +30,26 @@ resources:
     keyDataTable:
       Type: AWS::DynamoDB::Table
       Properties:
-          TableName: reducer-key-table
-          AttributeDefinitions:
-              - AttributeName: id
-                AttributeType: S
-          KeySchema:
-              - AttributeName: id
-                KeyType: HASH
-          ProvisionedThroughput:
-            ReadCapacityUnits: 1
-            WriteCapacityUnits: 1
+        TableName: reducer-key-table
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
     songStatistics:
       Type: AWS::DynamoDB::Table
       Properties:
-          TableName: reducer-song-statistics
-          AttributeDefinitions:
-              - AttributeName: id
-                AttributeType: S
-          KeySchema:
-              - AttributeName: id
-                KeyType: HASH
-          ProvisionedThroughput:
-            ReadCapacityUnits: 1
-            WriteCapacityUnits: 1
+        TableName: reducer-song-statistics
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
